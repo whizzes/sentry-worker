@@ -1,0 +1,10 @@
+{
+  "name": "sentry-worker",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4.105.0"
+  }
+}

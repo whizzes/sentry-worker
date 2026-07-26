@@ -1,0 +1,6 @@
+name = "sentry-worker"
+main = "build/index.js"
+compatibility_date = "2026-06-29"
+
+[build]
+command = "worker-build --release"
