@@ -1,16 +1,23 @@
 use axum::Json;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use send_wrapper::SendWrapper;
 use serde_json::Value;
-use worker::{Headers, Method, RequestInit};
 
 use crate::state::AppState;
 
-pub async fn handler(State(_state): State<AppState>, Json(payload): Json<Value>) -> Response {
+pub async fn handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Response {
+    if !is_authorized(&headers, &state.sentry_integration_token) {
+        return (StatusCode::UNAUTHORIZED, "invalid or missing token").into_response();
+    }
+
     let message = build_discord_message(&payload);
-    let result = SendWrapper::new(forward_to_discord(&message)).await;
+    let result = SendWrapper::new(state.discord.send(&message)).await;
 
     if let Err(err) = result {
         worker::console_error!("failed to forward sentry webhook to discord: {err}");
@@ -18,6 +25,30 @@ pub async fn handler(State(_state): State<AppState>, Json(payload): Json<Value>)
     }
 
     (StatusCode::OK, "ok").into_response()
+}
+
+fn is_authorized(headers: &HeaderMap, expected_token: &str) -> bool {
+    let Some(value) = headers.get(header::AUTHORIZATION) else {
+        return false;
+    };
+
+    let Ok(value) = value.to_str() else {
+        return false;
+    };
+
+    let parts: Vec<&str> = value.split(' ').collect();
+
+    if parts.len() != 2 {
+        return false;
+    }
+
+    if !parts[0].eq_ignore_ascii_case("bearer") {
+        return false;
+    }
+
+    let token = parts[1];
+
+    token == expected_token
 }
 
 fn build_discord_message(payload: &Value) -> Value {
@@ -70,29 +101,4 @@ fn build_discord_message(payload: &Value) -> Value {
     }
 
     serde_json::json!({ "embeds": [embed] })
-}
-
-async fn forward_to_discord(body: &Value) -> worker::Result<()> {
-    let headers = Headers::new();
-    headers.set("content-type", "application/json")?;
-
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post)
-        .with_headers(headers)
-        .with_body(Some(worker::wasm_bindgen::JsValue::from_str(
-            &body.to_string(),
-        )));
-
-    // let request = WorkerRequest::new_with_init(webhook_url.as_str(), &init)?;
-    // let mut response = Fetch::Request(request).send().await?;
-
-    // if response.status_code() >= 400 {
-    //     let text = response.text().await.unwrap_or_default();
-    //     return Err(WorkerError::RustError(format!(
-    //         "discord responded {}: {text}",
-    //         response.status_code()
-    //     )));
-    // }
-
-    Ok(())
 }
